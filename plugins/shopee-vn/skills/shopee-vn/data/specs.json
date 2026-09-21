@@ -1,0 +1,7 @@
+{
+  "_format": "part number -> {voltage, heightMm, cl, src (maker URL), checked (YYYY-MM-DD)}. Add only values read from the maker's page; a non-maker source is named in `note`.",
+  "F4-3200C16D-32GTZN": { "voltage": 1.35, "cl": 16, "heightMm": null, "src": "https://www.gskill.com/specification/165/326/1562838932/F4-3200C16D-32GTZN-Specification", "checked": "2026-09-15", "note": "maker spec page has no height (points to FAQ); Trident Z Neo is a tall ~44 mm heatsink — not low-profile" },
+  "CMG32GX4M2E3200C16": { "voltage": 1.35, "cl": 16, "heightMm": null, "src": "https://www.corsair.com/ww/en/p/memory/cmg32gx4m2e3200c16/vengeance-rgb-rs-32gb-2-x-16gb-ddr4-dram-3200mhz-c16-memory-kit-cmg32gx4m2e3200c16", "checked": "2026-09-15", "note": "tested 1.35V CL16 (SPD 1.2V CL15); height not on maker page" },
+  "MD32GK2D4320016LP": { "voltage": 1.35, "cl": 16, "heightMm": 32, "src": "https://www.pny.com/xlr8-ddr4-3200mhz-low-profile-desktop-memory", "checked": "2026-09-15", "note": "values from B&H/Amazon listings of this part (maker page not fetched); low-profile" },
+  "LD4BU016G-R3200GDXG": { "voltage": 1.35, "cl": 16, "heightMm": 35.2, "src": "https://americas.lexar.com/product/lexar-thor-ddr4-udimm-desktop-memory/", "checked": "2026-09-15", "note": "height from retailer spec listings (maker page not fetched); just over the 35 mm low-profile line" }
+}

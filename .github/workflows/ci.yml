@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Personal-data scan
+        run: node scripts/pii-scan.js
+      - name: Manifests are valid JSON
+        run: |
+          for f in .claude-plugin/marketplace.json plugins/*/.claude-plugin/plugin.json; do
+            node -e "JSON.parse(require('fs').readFileSync('$f'))" && echo "ok $f"
+          done
+      - name: Every SKILL.md has name + description matching its folder
+        run: |
+          for s in plugins/*/skills/*/SKILL.md; do
+            dir=$(basename "$(dirname "$s")")
+            grep -q "^name: $dir$" "$s" || { echo "::error file=$s::name must be '$dir'"; exit 1; }
+            grep -q "^description: ." "$s" || { echo "::error file=$s::missing description"; exit 1; }
+            echo "ok $s"
+          done
+      - name: Unit tests (every skill with a tests/ folder)
+        run: |
+          for t in plugins/*/skills/*/tests; do
+            echo "== $t"
+            (cd "$t/.." && node --test tests/*.test.js)
+          done

@@ -1,0 +1,14 @@
+# backups and local scratch
+*.bak
+*.bak[0-9]
+*.orig
+*.tmp
+.env
+.env.*
+node_modules/
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# never commit a sanitizer/export script: it names private data by design
+export.js

@@ -1,0 +1,21 @@
+{
+  "name": "shopee-vn",
+  "description": "Shop on Shopee Vietnam (shopee.vn) from your own logged-in browser: sweep listings, re-price the exact variant, flag listings whose title lies, and find which of your vouchers really apply to get the true checkout price.",
+  "version": "3.9.0",
+  "author": {
+    "name": "ai-skills contributors"
+  },
+  "homepage": "https://github.com/exfox15157/ai-skills/tree/main/plugins/shopee-vn",
+  "repository": "https://github.com/exfox15157/ai-skills",
+  "license": "MIT",
+  "keywords": [
+    "shopee",
+    "shopee-vn",
+    "vietnam",
+    "price-comparison",
+    "voucher",
+    "mã giảm giá",
+    "so sánh giá",
+    "claude-skill"
+  ]
+}

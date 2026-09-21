@@ -1,0 +1,8 @@
+{
+ "_format": "shopid/itemid -> list of picker reads {at (ISO +07:00), source ('app screenshot' | 'web checkout'), order (VND), best {pct,cap,min}, applied [...], blocked [{...,why}], freeShip {min}, note}. Pass the newest one as SH.rank({order, proven}) (at → Date.parse).",
+ "_checkouts_format": "key 'checkouts' -> shopid/itemid -> list of real checkout reads {at, source, qty, items, productDisc, shopV, voucher, ship, shipDisc, total, note}. Pass the newest as SH.checkout(k, {...}); lines must add up to total.",
+ "checkouts": {},
+ "_profiles": {
+  "example_24_can_carton": "SH.use({kit:{test:s=> s.length<=40 ? /24|thùng|lốc/i.test(s) && !/chai|1\\s*lon|6\\s*lon|lẻ/i.test(s) : /<brand>/i.test(s) && /24\\s*lon|thùng|x\\s*24|24\\s*x/i.test(s)}, maybeKit:null, bad:/\\bchai\\b|1[.,]5\\s?l|cận date|hết hạn|<other brands>/i, minShopMonths:6, maxShopItems:100000, maxModels:40, spread:10, baitRatio:0.6}); SH.config({shopee:[{pct:20,cap:50000,min:0}], shipVouchers:[{cap:50000,min:0}]}) — replace <brand>/<other brands>; `kit.test` gets model names (≤40 chars) and titles (longer). Vouchers here are an example: set them from your own picker/checkout read."
+ }
+}

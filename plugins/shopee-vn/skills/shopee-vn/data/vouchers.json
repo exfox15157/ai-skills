@@ -1,0 +1,6 @@
+{
+ "_format": "T&C URL -> parseTc result (+ts, code, endsAt). Survives a browser-profile wipe, which db.tc in shopee.vn localStorage does not. Seed a session with SH.tcImport(<this file>); dump new reads with SH.tcExport(). Entries drop themselves once endsAt has passed (+1 day grace); entries with endsAt null fall back to a 30-day TTL.",
+ "_note": "code comes from the T&C link's evcode param, base64 ('RVhBTVBMRTIy' -> 'EXAMPLE22'). A LIVE-/VIDEO- prefix means stream-only even when neither the wallet card nor the T&C prose says so.",
+ "at": null,
+ "tc": {}
+}
