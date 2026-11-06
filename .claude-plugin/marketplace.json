@@ -9,7 +9,7 @@
       "name": "shopee-vn",
       "source": "./plugins/shopee-vn",
       "description": "Find, compare and price items on Shopee Vietnam from your own logged-in browser: sweep listings, re-price the exact variant, flag bait/used/mislabelled listings, and work out which of your vouchers really apply to get the true checkout price.",
-      "version": "3.9.0",
+      "version": "4.3.0",
       "category": "shopping",
       "keywords": [
         "shopee",

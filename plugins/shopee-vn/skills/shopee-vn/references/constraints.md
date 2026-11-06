@@ -11,7 +11,7 @@ Part of the shopee-vn skill — see ../SKILL.md.
 | 3 | Direct API = one call per page load | **Can't fix safely** — capture via route change; results cached so hops aren't repeated |
 | 4 | ≤60 items/page, hops that don't refire | **Works live** (2026-09-15: 15/15 `S`, 0 `MISS`, 550 listings from 2 terms × 2 sorts × 2 pages + 7 part numbers). Category/Mall filters: click the filter once in the search sidebar, read `location.search`, save with `SH.config({urlParams})` **[param names not yet recorded — not reached in the first run]** |
 | 5 | Huge raw payloads | **Fixed**: summarized in-page, raw JSON dropped, outputs capped at 6–7 k chars |
-| 6 | Wallet lazy-load (~260/1 433) | **Still open**: tabs + in-app route work live; v3.1 card finder fixed (v3.0 found 0); scrolling stalls at ~280/1 410 → logged as `PARTIAL`. Next idea: find the list's own scroll container / "load more" on a real wallet page |
+| 6 | Wallet lazy-load (~260/1 433) | **Fixed**: 4.1 reads the API pages; the rest load with the End key, or the mouse wheel when End stalls (V11). JS `scrollTo` does not load pages |
 | 7 | App-only vouchers | **Workaround**: user screenshot of the app picker. Emulator not recommended (Shopee flags emulators; account risk) |
 | 8 | Consent per cart step | **Fixed by process**: pre-approved test-checkout run (§6) |
 | 9 | Specs missing from listings | **Mostly fixed**: part-number decoder (speed/CL/kit offline); voltage/height cached in `data/specs.json` |

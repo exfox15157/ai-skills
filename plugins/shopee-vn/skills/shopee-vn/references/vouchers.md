@@ -6,12 +6,14 @@ Part of the shopee-vn skill — see ../SKILL.md.
 
 Wallet cards are marketing, not the contract. Three layers, each stricter:
 
-1. **Wallet** → `SH.wallet({order:[candidate totals]})`. Opens every tab (Shopee / ShopeeVIP / Shop …) and scrolls
-   each until the count stops growing. Live 2026-09-15: in-app route and tab detection work (`All (1448)`, `Shopee (1410)`,
-   `ShopeeVIP (N)`, `Shop (N)`…). v3.0 found **0 cards** (card-finder bug, fixed in 3.1). With the fix, scrolling
-   still stalls at **~280 of 1 410** in the Shopee tab — the log says `PARTIAL`; the top % vouchers load first, so the
-   ranking is usable, but don't claim "all vouchers checked". The Shop tab holds other shops' vouchers (Unilever, Apple…) — ignore for a RAM order.
-   If it throws `NEEDS_NAVIGATE`, navigate there, BOOT, rerun.
+1. **Wallet** → `SH.wallet({order:[candidate totals]})` opens the **All** tab and reads page 1 of the page's own
+   `get_user_voucher_list` (50 per page). Load the rest as in §0b V11 (End key, mouse wheel when End stalls) →
+   `SH.walletPages()` → repeat until `done:true` →
+   `SH.walletRead({order})`. Log `COMPLETE: N API pages` = every voucher held; `PARTIAL` = say so (V4). The tab counters
+   ("Tất Cả (1951)") add up usage multiples (x3, x5) — the real list is ~350–400 unique vouchers. Shop-tab
+   cards from other shops are ignored by the ranking. If it throws `NEEDS_NAVIGATE`, navigate there, BOOT, rerun.
+   (History: card-text scrolling stalled at ~280/1 410 before v4.1; mouse-wheel loading needed ~6 screenshots per
+   page before 2026-10-22.)
 2. **T&C** → **`SH.vouchers()` first** (free): T&C is cached until the voucher's own end date, so a code already
    listed there needs no hop. On a fresh browser profile the localStorage cache is empty — `SH.tcImport(<paste
    data/vouchers.json>)` before reading anything, and `SH.tcExport()` → write new entries back to that file at the
@@ -49,7 +51,7 @@ Wallet cards are marketing, not the contract. Three layers, each stricter:
 | bucket | meaning | how to quote it |
 |---|---|---|
 | `useNow` | matches a voucher seen in a picker for **this item** (`evidence: picker`) | ✅ with the picker's saving |
-| `candidates` | valid today, in the wallet, never seen in a picker | ≈ "may apply", never as the price |
+| `candidates` | valid today, in the wallet, never seen in a picker | ≈ "may apply" |
 | `notForItem` | `blocked` in the picker, other shops' Shop-tab cards, or **`beaten-by-picker`**: bigger than the picker's auto-chosen best on the same day — Shopee's "Lựa chọn tốt nhất" would have taken it, so it doesn't apply | don't list (one line: "N bigger vouchers don't apply to this item") |
 | `later` | `Use from:` in the future; `extraVsNow` = saving over today's proven best | "wait to <date> for ≤ +Xk, eligibility unproven" |
 | `liveOnly` / `freeShip` | Live/Video-only · free shipping (app cards show no amount) | separate lines |
@@ -69,21 +71,3 @@ a picker only proves "beaten" for **the same day** — next day pass it for `use
 Decision the report gives: **buy now at `useNow[0]`** vs **wait for `later[0]`** (only if `extraVsNow` is worth it,
 the voucher isn't limited-quantity-risky, and today's best doesn't expire first — `EXPIRES<24h`). Ask the user to scroll
 the picker to the end: greyed rows are the only proof of *why* a big voucher doesn't apply.
-
-## 5b. Offer a reminder whenever timing matters
-
-After a report or checkout test, **offer (don't create unasked)** a reminder if any of these exist:
-an app-only/dated voucher (e.g. "valid 20 Sept only"), a shop voucher or flash sale expiring soon,
-a voucher that only starts later ("Use from: …"), limited stock/quantity, or a payday/mega-sale date
-(9.9, 10.10, 11.11, 12.12, 15th mid-month). One line: "Want a reminder on <date> <time> to buy <item>?"
-
-When the user says yes, create it with `mcp__scheduled-tasks__create_scheduled_task`:
-- `fireAt` one-time ISO timestamp in **+07:00** (Vietnam); default **07:00** on the voucher day — earlier if
-  the voucher is limited quantity and the user agrees. Never use cron for one-time reminders.
-- The prompt must be self-contained (runs have no memory of the chat): product name + link + shop,
-  expected price math, voucher name/code/cap/min/device/validity, fallback price if the sale ends,
-  step-by-step app checkout (tick only this item, qty, which vouchers, expected total, no insurance
-  add-on), alternatives if the voucher doesn't apply, and "do NOT open a browser, change the cart or
-  place an order". Start the run with `PushNotification` (status `proactive`, < 200 chars).
-- Tell the user: it runs while the Claude app is open (otherwise on next launch), and where to manage it
-  (sidebar → Scheduled). Example: task `shopee-buy-asgard-ram-20-sept`.

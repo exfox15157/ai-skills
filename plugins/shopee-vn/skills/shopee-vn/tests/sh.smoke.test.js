@@ -11,7 +11,7 @@ const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'sh.js'), 'utf8');
 
 function fakePage({ block = false, cfg = {} } = {}) {
   const store = new Map([['__sh_db', JSON.stringify({ cfg: { dwell: [10, 20], ...cfg } })]]);
-  const ctx = vm.createContext({ console, setTimeout, URL, URLSearchParams, Promise });
+  const ctx = vm.createContext({ console, setTimeout, URL, URLSearchParams, Promise, atob, btoa });
   ctx.window = ctx;
   ctx.localStorage = { getItem: (k) => (store.has(k) ? store.get(k) : null), setItem: (k, v) => store.set(k, String(v)) };
   ctx.location = { pathname: '/', search: '', origin: 'https://shopee.vn' };
@@ -45,7 +45,7 @@ function fakePage({ block = false, cfg = {} } = {}) {
 
 test('install, self-store for BOOT, hook, sweep → pdp → report', async () => {
   const { SH, ret, store } = fakePage();
-  assert.match(ret, /SH 3.9 ready/);
+  assert.match(ret, /SH 4.3 ready/);
   assert.match(store.get('__shlib'), /^\(function SHLIB/);
   assert.match(SH.sweep(SH.queries({ terms: ['ram ddr4 2x16gb'] })), /started sweep/);
   const w = JSON.parse(await SH.wait('sweep', 15000));
@@ -106,4 +106,21 @@ test('hop budget refuses extra hops', async () => {
   const w = JSON.parse(await SH.wait('sweep', 15000));
   assert.equal(w.status, 'failed');
   assert.match(w.error, /HOP BUDGET reached \(1\/h of 1/);
+});
+
+test('v4.3 wallet: pages captured by the hook (mouse scrolling) -> walletPages / walletRead, no JS scroll needed', async () => {
+  const { ctx, SH } = fakePage();
+  const page = (start, n) => ({ data: { user_voucher_list: Array.from({ length: n }, (_, i) => ({ promotionid: start + i, voucher_code: 'V' + (start + i), signature: 's', reward_type: 0, discount_percentage: 13, discount_cap: 150000000000, min_spend: 250000000000, shop_id: 0, icon_text: 'SHOPEE MALL' })) } });
+  ctx.__capPush('/api/v2/voucher_wallet/get_user_voucher_list', page(1, 50));
+  let p = JSON.parse(SH.walletPages());
+  assert.deepEqual([p.pages, p.vouchers, p.done], [1, 50, false]);
+  assert.match(p.next, /computer scroll/);
+  ctx.__capPush('/api/v2/voucher_wallet/get_user_voucher_list_meta', { data: {} }); // meta call is not a page
+  ctx.__capPush('/api/v2/voucher_wallet/get_user_voucher_list', page(51, 24));
+  p = JSON.parse(SH.walletPages());
+  assert.deepEqual([p.pages, p.vouchers, p.done], [2, 74, true]);
+  const r = JSON.parse(SH.walletRead({ order: [35662000] }));
+  assert.match(r.status, /^COMPLETE: 2 API pages, 74 vouchers/);
+  assert.equal(r.unique, 74);
+  assert.equal(SH.db().wallet.complete, true);
 });

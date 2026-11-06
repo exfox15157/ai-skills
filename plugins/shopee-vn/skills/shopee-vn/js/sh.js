@@ -1,4 +1,4 @@
-// SH v3.9 — shopee-vn page library. Paste once per version (BOOT restores it after reloads); calls are one-liners `SH.*`.
+// SH v4.3 — shopee-vn page library. Paste once per version (BOOT restores it after reloads); calls are one-liners `SH.*`.
 // It also saves itself to this origin's localStorage so after a reload the BOOT one-liner in SKILL.md
 // restores it without pasting. Read-only (no cart/checkout writes). Never forges request signatures:
 // it only reads JSON the page's own signed XHR/fetch calls already received.
@@ -6,7 +6,7 @@
   try { localStorage.setItem('__shlib', '(' + lib + ')()'); } catch (e) { /* storage blocked: paste again after reloads */ }
   return lib();
 })(function SHLIB() {
-  const VER = '3.9';
+  const VER = '4.3';
   const W = typeof window !== 'undefined' ? window : globalThis;
   if (W.SH && W.SH.v === VER) return 'SH ' + VER + ' already installed';
 
@@ -109,6 +109,8 @@
       official: !!(s.is_official_shop || d.is_official_shop || /OFFICIAL|MALL/i.test(a.seller_flag?.name || '')), preferred: !!(s.shopee_verified || d.shopee_verified || /PREFERRED/i.test(a.seller_flag?.name || '')),
       ad: !!(it.adsid || d.adsid || it.campaignid || a.icon_in_image?.ads_text), soldout: !!d.is_sold_out, catid: d.catid ?? null,
       tiers: (d.tier_variations || []).map((t) => (t.options || []).join('|')).join(' ; ').slice(0, 300), ts: Date.now(),
+      // campaign frame on the card image; live 2026-10-04 '17VCX+ShopeeHome[26.9-12.10.2026]' / '24VCX[…]' — VCX ≈ Voucher Xtra (hypothesis)
+      overlay: a.image_overlay?.legacy_overlay?.name || a.image_overlay?.featured_promo_overlay?.name || null, vcx: /VCX/i.test(a.image_overlay?.legacy_overlay?.name || ''),
     };
   }
   const HARD = /^(no-kit-option|bad-word|sold-out|overseas)/;
@@ -167,16 +169,47 @@
     if (models.length === 1 && shown && models[0].price && shown < models[0].price) f.push('shown-price-includes-shop-voucher');
     if (!parts.length) f.push('no-part-number');
     const sh = shipFromPc(j); if (sh?.expressOnly) f.push(`express-only-shipping ${K(sh.min)}`);
+    const noShip = shipUnsupported(j, dom?.noShipText); if (noShip) rej.push('NO-DELIVERY to account address (Vận Chuyển: Không hỗ trợ)');
+    let ship = noShip ? null : sh || (dom?.shipJ && shipFromPc(dom.shipJ)) || parseShipText(dom?.ship);
+    // a DOM-read fee at or above half the item price is a mis-read amount, not shipping (2026-10-04: a fee equal to the item price on a large appliance)
+    const topPrice = Math.max(0, ...kit.map((m) => m.price || 0));
+    if (ship && ship.src === 'dom' && topPrice && ship.max >= topPrice / 2) { f.push(`ship-text-suspect ${K(ship.max)}`); ship = null; }
     const bait = f.filter((x) => /new-shop|huge-catalog|many-models|price-spread|abroad/.test(x)).length >= 2;
     return {
       k, ts: now, title: clip(title, 90), cond: it.condition ?? null, shown, modelsN: models.length,
       kit: kit.slice(0, 40), shop: { name: s.name, star: s.rating_star != null ? +(+s.rating_star).toFixed(2) : null, ratings: (s.rating_good || 0) + (s.rating_normal || 0) + (s.rating_bad || 0), joined: s.ctime ? new Date(s.ctime * 1000).toISOString().slice(0, 7) : null, items: s.item_count ?? null, official: !!s.is_official_shop, loc: s.shop_location || null },
       parts: parts.slice(0, 2), spec: clip(spec, 250), desc: clip(desc, 400), shopVouchers: clip(dom?.shopVouchers, 300),
-      ship: shipFromPc(j) || (dom?.shipJ && shipFromPc(dom.shipJ)) || parseShipText(dom?.ship), shopV: (() => { const v = [...shopVouchersFromCaptures([{ j: { data: { list: d.shop_vouchers || [] } } }]), ...(dom?.shopV || [])]; return (v.length ? v : parseShopVoucherText(dom?.shopVouchers)).slice(0, 6); })(), // get_pc data.shop_vouchers (empty on both live listings; item fields unverified)
+      ship, noShip, shopV: (() => { const v = [...shopVouchersFromCaptures([{ j: { data: { list: d.shop_vouchers || [] } } }]), ...(dom?.shopV || [])]; return (v.length ? v : parseShopVoucherText(dom?.shopVouchers)).slice(0, 6); })(), // get_pc data.shop_vouchers (empty on both live listings; item fields unverified)
       flags: [...rej, ...f, ...(bait ? ['LIKELY-BAIT'] : [])], verdict: rej.length ? 'reject' : bait ? 'reject' : f.length ? 'warn' : 'ok',
     };
   }
 
+  /**
+   * v4.1: wallet voucher from the page's own voucher_wallet/get_user_voucher_list response (POST, 50 per page).
+   * Live 2026-10-04: the DOM read stopped at 50 cards while the API held 345 unique vouchers - the "(1586)" tab
+   * count adds up usage multiples (x3, x5), it is not the number of vouchers. The 13%/1.5M Voucher Xtra Mall card
+   * that the checkout picker chose sat on API page 3. reward_type 0 = discount, 1 = coins, 2 = free shipping;
+   * money x1e5; icon_text = the card's scope label ("SHOPEE MALL", "Thời Trang", "Mã vận chuyển", a shop name).
+   */
+  function parseWalletApi(v, order = [], now = Date.now()) {
+    if (!v || !v.promotionid || v.has_expired || v.disabled || v.fully_used) return null;
+    const pct = +(v.discount_percentage ?? v.reward_percentage) || null, cap = V(+(v.discount_cap ?? v.reward_cap)) || 0;
+    const value = V(+(v.discount_value ?? v.reward_value)) || 0, min = V(+v.min_spend) || 0, code = v.voucher_code || null;
+    const freeShip = v.reward_type === 2 || /^FSV-/i.test(code || ''), coins = v.reward_type === 1;
+    if (!pct && !value && !cap && !freeShip) return null;
+    const startsAt = v.start_time && v.start_time * 1000 > now ? v.start_time * 1000 : null, endsAt = v.end_time ? v.end_time * 1000 : null;
+    const tab = v.shop_id ? 'Shop' : /^SVIP/i.test(code || '') ? 'ShopeeVIP' : 'Shopee';
+    const scope = clip(v.icon_text || v.shop_name || '', 30);
+    return {
+      pct, cap: cap || value, min, value, code, type: scope, scope, tab, coins, freeShip, productLimit: !!v.product_limit,
+      liveVideoOnly: /^(LIVE|VIDEO)-/i.test(code || '') || /live|video/i.test(scope), specificProducts: false,
+      startsAt, endsAt, when: endsAt ? 'HSD: ' + new Date(endsAt + 7 * 3.6e6).toISOString().slice(0, 10) : null,
+      usedPct: v.percentage_used ?? null, uses: v.remaining_usage_limit ?? null, shopId: v.shop_id || null,
+      url: code && v.signature ? `/voucher/details?evcode=${encodeURIComponent(btoa(code))}&from_source=voucher-wallet&promotionId=${v.promotionid}&signature=${v.signature}` : null,
+      save: order.map((o) => (o >= min ? Math.round(pct ? Math.min((o * pct) / 100, cap || Infinity) : value || cap) : 0)),
+      sig: 'api:' + v.promotionid,
+    };
+  }
   function parseWalletCard(b, order = [], now = Date.now()) {
     if (!/Min\. Spend|Đơn tối thiểu/i.test(b)) return null;
     // units: web "1m₫ / 300k₫", app "1trđ / 2,2trđ / 500kđ"; never let "\nMin. Spend" read as "m"
@@ -220,7 +253,7 @@
     const bestProven = proven && (proven.applied || []).concat(proven.best ? [proven.best] : []);
     const provenRows = rows.filter((r) => bestProven && bestProven.some((v) => same(r, v)));
     const bestNow = Math.max(0, ...provenRows.filter((r) => !r.freeShip && !(r.startsAt > now)).map((r) => r.save[0] || 0));
-    const out = { useNow: [], candidates: [], notForItem: [], later: [], liveOnly: [], freeShip: [] };
+    const out = { useNow: [], candidates: [], notForItem: [], later: [], liveOnly: [], freeShip: [], coins: [] };
     for (const r of rows) {
       if (r.endsAt && r.endsAt < now) continue;
       const t = tc[r.i] || {}, tags = [];
@@ -229,7 +262,8 @@
       if (t.selectedOnly || r.specificProducts) tags.push('SELECTED');
       if (r.endsAt && r.endsAt - now < 24 * 3.6e6) tags.push('EXPIRES<24h');
       const row = { ...r, tags, evidence: isProven ? 'picker' : blocked ? 'blocked: ' + (blocked.why || '') : t.headline ? 'T&C' : 'wallet' };
-      if (r.freeShip) out.freeShip.push(row);
+      if (r.coins) out.coins.push(row); // Hoàn Xu is cashback, never a price cut (v4.1: API birthday card 20% coins ranked first as -7.1M)
+      else if (r.freeShip) out.freeShip.push(row);
       else if (r.liveVideoOnly) out.liveOnly.push(row);
       // Rule 2026-09-17: a "một số sản phẩm" voucher never enters an estimate until a picker proves it for this item
       // (EXAMPLE22 22% / EXAMPLE23 23% were quoted, the app picker applied neither).
@@ -340,7 +374,21 @@
    * Lesson 2026-09-15 (a 24-can soft-drink carton, app checkouts): ranking by item price put a 235k listing first,
    * but its shipping was 208.6k → 347k at checkout, while the 259k Mall listing shipped for 91.1k → 240.5k.
    * Heavy/bulky goods: shipping can be most of the price and differs between shops in the same city. */
-  const SHIP_RE = /(?:Shipping Fee|Shipping To|Phí vận chuyển|Phí ship|Vận chuyển tới|Vận Chuyển Tới)/i;
+  // (?<!Miễn ) — 2026-10-04 the PDP guarantee line "Chính hãng 100% • Miễn phí vận chuyển • Bảo hiểm…" matched
+  // "phí vận chuyển" and the next ₫ amount on the page (the item price) was read as a 36.19M shipping fee.
+  const SHIP_RE = /(?:Shipping Fee|Shipping To|(?<!Miễn )Phí vận chuyển|Phí ship|Vận chuyển tới|Vận Chuyển Tới)/i;
+  /**
+   * "Vận Chuyển / Không hỗ trợ" = the listing does not deliver to the account's default address (rule 2026-10-04:
+   * reject at once). Live 2026-10-04, BrandA R-AB640X0 to the test address: 16 of 18 appliance listings showed it and
+   * their get_pc carried product_shipping: null. Also true when get_pc lists channels but every one is unserviceable.
+   */
+  const NO_SHIP_RE = /(?:^|\n)\s*(?:Vận Chuyển|Shipping)\s*\n\s*(?:Không hỗ trợ|Not supported|Unsupported|Không giao được)/i;
+  function shipUnsupported(j, domText) {
+    if (NO_SHIP_RE.test(String(domText || ''))) return true;
+    const ps = j?.data?.product_shipping;
+    const ch = ps ? [...(ps.ungrouped_channel_infos || []), ...(ps.grouped_channel_infos_by_service_type || []).flatMap((g) => g.channel_infos || [])] : [];
+    return ch.length > 0 && ch.every((c) => c.warning);
+  }
   /** PDP shipping block text → {min, max, free} (VND) or null. "Miễn phí vận chuyển" only counts when no fee is shown. */
   function parseShipText(t) {
     t = String(t || '');
@@ -444,7 +492,34 @@
   }
   const fmtCheckout = (e) => (!e ? '?' : `${e.total == null ? '?ship' : K(e.total)} = ${K(e.items ?? e.price)}${e.productDisc ? ' −SP ' + K(e.productDisc) : ''}${e.shopV ? ' −shop ' + K(e.shopV) : ''}${e.shopeeV ? ' −Shopee ' + K(e.shopeeV) : ''} +ship ${e.ship == null ? '?' : K(e.ship) + (e.shipRange ? '(' + e.shipRange.map(K).join('–') + ')' : '')}${e.shipV ? ' −shipV ' + K(e.shipV) : ''}${e.missing && e.missing.length ? ' [NOT COUNTED: ' + e.missing.join('+') + ']' : ''}`);
 
-  const SH = { v: VER, PROFILES, _t: { money, decodeParts, titleSpecs, modelGB, mismatch, parseSearchItem, searchFlags, summarizePdp, isWalletCardText, parseWalletCard, rankVouchers, parseTc, tcEnd, tcCode, codeFromUrl, tcEvict, recordPrice, wasCheck, median, out, parseShipText, shipFromPc, parseShopVoucherJson, shopVouchersFromCaptures, parseShopVoucherText, voucherSave, checkoutEstimate, fmtCheckout } };
+  /**
+   * Multi-tab merge (v4.0, parallel lanes). Every lane is a separate tab of the same shopee.vn origin, so all of them
+   * share ONE localStorage db. Before v4.0 each tab kept its own in-memory copy and save() wrote the whole object back,
+   * so the last tab to save erased the others' PDPs/T&C. mergeDb(mem, stored) → the union, newest entry winning;
+   * hops = union of timestamps (one shared budget); blockedUntil = the later; cfg/wallet = newer stamp wins;
+   * tomb = keys deleted by SH.forget (kept 1 day so another tab's stale copy cannot resurrect them).
+   */
+  const MAPS = { items: (v) => v.ts, pdp: (v) => v.ts, prices: (v) => Date.parse(v.seen) || 0, searched: (v) => v, tc: (v) => v.ts, checkouts: (v) => Date.parse(v.at) || 0, pickers: (v) => Date.parse(v.at) || 0 };
+  function mergeDb(mem, st) {
+    if (!st || typeof st !== 'object') return mem;
+    const out = { ...st, ...mem }, now = Date.now();
+    out.tomb = { ...(st.tomb || {}), ...(mem.tomb || {}) };
+    for (const [k, t] of Object.entries(out.tomb)) if (now - t > 8.64e7) delete out.tomb[k];
+    for (const [m, stamp] of Object.entries(MAPS)) {
+      const a = mem[m] || {}, b = st[m] || {}, r = { ...b };
+      for (const [k, v] of Object.entries(a)) if (!(k in b) || (stamp(v) || 0) >= (stamp(b[k]) || 0)) r[k] = v;
+      for (const k of Object.keys(r)) { const t = out.tomb[m + ':' + k]; if (t && (stamp(r[k]) || 0) <= t) delete r[k]; }
+      out[m] = r;
+    }
+    out.hops = [...new Set([...(st.hops || []), ...(mem.hops || [])])].sort((x, y) => x - y);
+    out.blockedUntil = Math.max(st.blockedUntil || 0, mem.blockedUntil || 0) || undefined;
+    const newer = (x) => ((mem[x + 'Ts'] || 0) >= (st[x + 'Ts'] || 0) ? mem : st);
+    out.cfg = newer('cfg').cfg || {}; out.cfgTs = newer('cfg').cfgTs || 0;
+    out.wallet = newer('wallet').wallet || null; out.walletTs = newer('wallet').walletTs || 0;
+    return out;
+  }
+
+  const SH = { v: VER, PROFILES, _t: { mergeDb, shipUnsupported, parseWalletApi, money, decodeParts, titleSpecs, modelGB, mismatch, parseSearchItem, searchFlags, summarizePdp, isWalletCardText, parseWalletCard, rankVouchers, parseTc, tcEnd, tcCode, codeFromUrl, tcEvict, recordPrice, wasCheck, median, out, parseShipText, shipFromPc, parseShopVoucherJson, shopVouchersFromCaptures, parseShopVoucherText, voucherSave, checkoutEstimate, fmtCheckout } };
   W.SH = SH;
   if (typeof document === 'undefined') return 'SH ' + VER + ' (pure helpers only)';
 
@@ -455,7 +530,16 @@
   for (const x of ['items', 'pdp', 'prices', 'searched', 'tc', 'cfg', 'checkouts', 'pickers']) db[x] = db[x] || {};
   db.hops = db.hops || [];
   const cfg = Object.assign({ perHour: 45, perDay: 200, dwell: [5000, 7000], cooldownMin: 30, searchTTLh: 12, pdpTTLh: 24, urlParams: '', shopee: [], shipVouchers: [], vouchersNone: false }, db.cfg);
+  /** Pull other tabs' writes into this tab (no write). Called before every hop and report, so lanes see one budget and one store. */
+  function sync() {
+    let st = null; try { st = JSON.parse(localStorage.getItem(DBK)); } catch (e) { /* unreadable: keep memory */ }
+    if (!st) return;
+    const m = mergeDb(db, st); for (const k of Object.keys(db)) delete db[k]; Object.assign(db, m);
+    for (const x of Object.keys(MAPS)) db[x] = db[x] || {};
+    Object.assign(cfg, db.cfg);
+  }
   function save() {
+    sync();
     const now = Date.now(), old = (o, ms, f = (v) => v.ts) => { for (const [k, v] of Object.entries(o)) if (now - f(v) > ms) delete o[k]; };
     old(db.items, 7 * 8.64e7); old(db.pdp, 3 * 8.64e7); old(db.searched, 8.64e7, (v) => v); tcEvict(db.tc, now); old(db.checkouts, 7 * 8.64e7, (v) => Date.parse(v.at)); old(db.pickers, 7 * 8.64e7, (v) => Date.parse(v.at));
     old(db.prices, 120 * 8.64e7, (v) => Date.parse(v.seen));
@@ -466,7 +550,13 @@
 
   /* ---------- capture of the page's own API responses ---------- */
   W.__cap = W.__cap || []; W.__capSeq = W.__capSeq || 0; W.__capKeep = W.__capKeep || {};
-  W.__capPush = (u, j) => { W.__cap.push({ id: ++W.__capSeq, u: String(u), t: Date.now(), j }); if (W.__cap.length > 60) W.__cap.splice(0, W.__cap.length - 60); };
+  const WAPI = /voucher_wallet\/get_user_voucher_list(?!_meta)/;
+  W.__capPush = (u, j) => {
+    W.__cap.push({ id: ++W.__capSeq, u: String(u), t: Date.now(), j }); if (W.__cap.length > 60) W.__cap.splice(0, W.__cap.length - 60);
+    // v4.3: wallet pages get their own store - mouse scrolling also fires other voucher calls that would push them out of __cap's 60
+    const L = WAPI.test(String(u)) && j?.data?.user_voucher_list;
+    if (L) (W.__shWPages = W.__shWPages || []).push({ t: Date.now(), n: L.length, vs: L });
+  };
   W.__capRE = /search\/search_items|pdp\/get_pc|item\/get_ratings|voucher|cart\/get|checkout\/get|shipping|logistic/;
   if (!W.__shHooked) {
     W.__shHooked = 1;
@@ -489,11 +579,12 @@
 
   /* ---------- pacing, budget, block detection ---------- */
   function hopCheck() {
+    sync(); // other lanes' hops count against the same budget
     const now = Date.now();
     if (db.blockedUntil > now) throw new Error('BLOCKED — cooldown until ' + new Date(db.blockedUntil).toLocaleTimeString() + '. Stop and tell the user.');
     const h = db.hops.filter((t) => now - t < 3.6e6).length, d = db.hops.length;
     if (h >= cfg.perHour || d >= cfg.perDay) throw new Error(`HOP BUDGET reached (${h}/h of ${cfg.perHour}, ${d}/day of ${cfg.perDay}). Pause; don't raise it without the user.`);
-    db.hops.push(now);
+    db.hops.push(now); save(); // write-through so a parallel lane sees this hop at once
   }
   function checkBlock(id) {
     const refused = since(id).some((c) => c.j && (c.j.error === 90309999 || c.j.error_code === 90309999));
@@ -585,7 +676,10 @@
         const shipCap = since(r.id0).find((c) => /shipping|logistic/i.test(c.u) && c.j);
         if (vcaps[0]) W.__capKeep.voucher = { u: vcaps[0].u, j: vcaps[0].j };
         if (shipCap) W.__capKeep.ship = { u: shipCap.u, j: shipCap.j };
+        // DOM is trusted for "Không hỗ trợ" only when it shows THIS product: in Edge route changes may not re-render
+        const t0 = String(r.hit.j?.data?.item?.title || '').slice(0, 30), domIsThis = !!t0 && (txt.includes(t0) || document.title.includes(t0));
         const dom = {
+          noShipText: domIsThis ? txt.slice(0, 6000) : '',
           ship: (txt.match(new RegExp(SHIP_RE.source + '[\\s\\S]{0,220}', 'i')) || [])[0] || '',
           shopV: shopVouchersFromCaptures(vcaps), shipJ: shipCap?.j || null,
           spec: (txt.match(/(?:Product Specifications|CHI TIẾT SẢN PHẨM)\n([\s\S]*?)(?:Product Description|MÔ TẢ SẢN PHẨM)/i) || [])[1] || '',
@@ -595,7 +689,7 @@
         const S = summarizePdp(k, r.hit.j, dom, profile); W.__capKeep.pdp = { u: r.hit.u, j: r.hit.j }; r.hit.j = null;
         for (const m of S.kit) { recordPrice(db.prices, k, m); const w = wasCheck(db.prices, k, m); if (w) S.flags.push('fake-was: ' + w); }
         db.pdp[k] = S;
-        log(`${S.verdict.toUpperCase()} ${k} ship ${S.ship ? K(S.ship.max) : '?'} shopV ${S.shopV.length} ${S.flags.slice(0, 2).join(', ')}`);
+        log(`${S.verdict.toUpperCase()} ${k} ship ${S.noShip ? 'KHÔNG HỖ TRỢ' : S.ship ? K(S.ship.max) : '?'} shopV ${S.shopV.length} ${S.flags.slice(0, 2).join(', ')}`);
       }
       return { next: 'SH.report()' };
     });
@@ -604,6 +698,7 @@
   /* ---------- report: compact, token-cheap ---------- */
   // keys: only these PDP rows (rows from other categories overflow the 7k output)
   function report({ top = 15, fresh = cfg.searchTTLh, keys = null } = {}) {
+    sync(); // merge the PDPs / vouchers other lanes wrote
     const items = Object.values(db.items).filter((o) => Date.now() - o.ts < fresh * 3.6e6);
     let scored = items.map((o) => ({ o, f: searchFlags(o, profile) }));
     const med = median(scored.filter((x) => !x.f.some((y) => HARD.test(y) || y === 'kit?')).map((x) => x.o.price));
@@ -612,7 +707,9 @@
     const pass = scored.filter((x) => !x.f.some((y) => HARD.test(y))).sort((a, b) => (soft(a) - soft(b)) || a.o.price - b.o.price);
     const rejected = {};
     for (const x of scored) { const h = x.f.find((y) => HARD.test(y)); if (h) { const r = h.split(':')[0]; rejected[r] = (rejected[r] || 0) + 1; } }
-    const P = Object.values(db.pdp).filter((s) => Date.now() - s.ts < cfg.pdpTTLh * 3.6e6 && (!keys || keys.includes(s.k)));
+    const P0 = Object.values(db.pdp).filter((s) => Date.now() - s.ts < cfg.pdpTTLh * 3.6e6 && (!keys || keys.includes(s.k)));
+    // listings that do not deliver to the account address never reach a row — not even the reject tail (rule 2026-10-04)
+    const P = P0.filter((s) => !s.noShip), noDelivery = P0.filter((s) => s.noShip).map((s) => s.k);
     const byPart = {};
     for (const s of P) if (s.verdict !== 'reject' && s.parts[0] && s.kit[0]) (byPart[s.parts[0].part] = byPart[s.parts[0].part] || []).push(Math.min(...s.kit.map((m) => m.price)));
     const pdpRows = P.map((s) => {
@@ -652,6 +749,7 @@
       candidates_itemPriceOnly: pass.slice(0, top).map((x) => `${M(x.o.price)} | ${x.o.name.slice(0, 60)} | sold ${x.o.sold} ★${x.o.rating} | ${x.o.shop}${x.o.official ? ' MALL' : ''} | ${x.o.k}${x.f.length ? ' | ' + x.f.join(',') : ''}`),
       voucherGate: cfg.vouchersNone && !cfg.shopee.length && !cfg.shipVouchers.length ? 'OPEN via vouchersNone: recorded that the wallet WAS read and holds nothing applicable to these listings. Any [NOT COUNTED: ...] marker below therefore means "no such voucher exists for this account", not "unread".' : gateOpen ? undefined : `REFUSED - ${withheld} priced row(s) withheld: voucher layers were never read, so every total here would be a no-voucher CEILING, not a price. Do ONE of: (1) SH.wallet({order:[<total>]}) then SH.config({shopee:[{pct,cap,min}], shipVouchers:[{cap,min}]}); (2) SH.picker('shopid/itemid', {...}) from a real checkout picker; (3) SH.config({vouchersNone:true}) ONLY to record that the wallet was read and holds nothing applicable. Do not write a report from withheld rows.`,
       pdp: shownRows.map((r) => `${r.v === 'ok' ? '✓' : r.v === 'warn' ? '~' : '✗'} ${r.k} ${r.line}`),
+      noDelivery: noDelivery.length ? `${noDelivery.length} listing(s) dropped: "Vận Chuyển: Không hỗ trợ" to the account address` : undefined,
       nextPdp: nextPdp.length ? `SH.pdp(SH.last.nextPdp)  // ${nextPdp.length} unchecked` : 'none',
     }, 7000);
   }
@@ -682,12 +780,14 @@
   /** Re-rank the last wallet read for another order total or after a picker read — no hop, no scrolling. */
   const rank = (o) => out(rankObj(o));
   function rankObj({ order, proven = null } = {}) {
-    const raw = W.__shWalletRows || []; if (!raw.length) return 'no wallet read in this page — run SH.wallet first';
+    walletFromDb();
+    const raw = W.__shWalletRows || []; if (!raw.length) return 'no wallet read in this page or db — run SH.wallet first';
     // LIVE-/VIDEO- prefixed codes are stream-only even when neither the card nor the T&C prose says so
     // (2026-09-16: VIDEO-1000000000000001 read as a plain "Limited 22% off" app voucher until the code was decoded).
     const rows = raw.map((x) => {
       const code = codeFromUrl((W.__shWallet || [])[x.i]);
-      const r = Object.assign(parseWalletCard(x.text, order || x.order) || {}, { i: x.i, tab: x.tab, code });
+      const r = x.api ? Object.assign({}, x.api, { i: x.i, save: (order || x.order || []).map((o) => (o >= x.api.min ? Math.round(x.api.pct ? Math.min((o * x.api.pct) / 100, x.api.cap || Infinity) : x.api.value || x.api.cap) : 0)) })
+        : Object.assign(parseWalletCard(x.text, order || x.order) || {}, { i: x.i, tab: x.tab, code });
       if (/^(LIVE|VIDEO)-/i.test(code || '')) r.liveVideoOnly = true;
       return r;
     }).filter((r) => r.sig);
@@ -700,48 +800,69 @@
       next: proven ? 'quote useNow as ✅ (picker); later = wait option' : 'SH.tc([#top candidates]) then ask for the app picker screenshot → SH.rank({order, proven})',
     });
   }
-  function wallet({ order = [], proven = null, name = 'wallet' } = {}) {
-    return job(name, async (log, J) => {
+  /** v4.0: the wallet read is persisted in db.wallet (24 h), so a navigate or another lane's tab can still rank / read T&C by #index. */
+  function walletFromDb() {
+    if ((W.__shWalletRows || []).length) return;
+    sync(); const w = db.wallet; if (!w || Date.now() - (db.walletTs || 0) > 8.64e7) return;
+    W.__shWallet = w.urls || []; W.__shWalletRows = w.rows || [];
+  }
+  /*
+   * Voucher wallet, v4.3 (rule 2026-10-06): CLAUDE SCROLLS WITH THE MOUSE, the library only opens and reads.
+   * Live 2026-10-06: window.scrollTo / scrollTop / the End key never fired the wallet's next page, while real
+   * `computer` wheel scrolls did - even with document.visibilityState 'hidden' (v4.2's NEEDS_FOREGROUND guard would
+   * have refused forever). Each wheel trip to the bottom = one signed get_user_voucher_list page (50); a page < 50 = end.
+   * Flow: SH.wallet() -> [computer scroll down 10 ticks, x2-3, wait 4 s -> SH.walletPages()] until done -> SH.walletRead({order}).
+   */
+  function walletPages() {
+    const P = W.__shWPages || [], last = P[P.length - 1];
+    const n = new Set(P.flatMap((p) => p.vs.map((v) => v.promotionid))).size;
+    return out({ pages: P.length, vouchers: n, lastPage: last ? last.n : null, done: !!last && last.n < 50, visibility: document.visibilityState,
+      next: !P.length ? 'no wallet page captured yet - run SH.wallet() (it opens the All tab), then wheel-scroll' : last.n < 50 ? 'COMPLETE - now SH.walletRead({order:[<total>]})' : 'NOT DONE - computer scroll down 10 ticks x2-3 on the voucher list, wait 4 s, then SH.walletPages() again (never window.scrollTo)' });
+  }
+  function wallet({ name = 'wallet' } = {}) {
+    return job(name, async (log) => {
+      const was = location.pathname;
       if (!(await open('/user/voucher-wallet', /Min\. Spend|Đơn tối thiểu/i, 12000))) throw new Error('NEEDS_NAVIGATE https://shopee.vn/user/voucher-wallet then BOOT');
+      if (was !== location.pathname) W.__shWPages = (W.__shWPages || []).filter((p) => Date.now() - p.t < 15000); // keep only page 1 of this open
       await sleep(2000);
-      // v3.0 excluded any div with a "Min. Spend" child — every real card has one, so it found 0 cards live
-      const cardEls = () => [...document.querySelectorAll('div')].filter((d) => { const t = d.innerText || ''; return t.length < 420 && isWalletCardText(t) && ![...d.children].some((c) => isWalletCardText(c.innerText || '')); });
       const tabs = [];
       for (const e of document.querySelectorAll('[role=tab], div, span, a, button')) {
         const t = (e.innerText || '').trim();
         if (/^[^\n()]{2,24}\s?\(\d+\)$/.test(t) && ![...e.children].some((c) => (c.innerText || '').trim() === t) && !tabs.some((x) => x.label === t) && visible(e)) tabs.push({ label: t, el: e });
       }
-      const seen = new Map(); W.__shWallet = []; W.__shWalletRows = [];
-      const list = tabs.filter((t) => !/^(All|Tất cả)\b/i.test(t.label));
+      // the All tab holds every voucher; click it only when another tab is active (re-clicking restarts the list at page 1)
+      const allTab = tabs.find((t) => /^(All|T\S{1,3}t\s+C\S{1,2})\s*\(/i.test(t.label.normalize('NFC')));
+      if (allTab && /[?&]type=(?!1\b)/.test(location.search)) { W.__shWPages = []; allTab.el.click(); await sleep(2500); }
       log('tabs: ' + (tabs.map((t) => t.label).join(', ') || 'none found'));
-      for (const tab of list.length ? list : [null]) {
-        if (J.stop) break;
-        if (/\(0\)$/.test(tab?.label || '')) continue;
-        if (tab) { tab.el.click(); await sleep(1500); for (let i = 0; i < 12 && !cardEls().length; i++) await sleep(600); } // cards arrive late
-        let last = -1, stable = 0; const sc = scrollables();
-        for (let i = 0; i < 120 && stable < 4; i++) {
-          window.scrollBy(0, 4000); for (const s of sc) s.scrollTop += 4000;
-          const more = [...document.querySelectorAll('button, div[role=button]')].find((b) => /^(see more|load more|xem thêm)$/i.test((b.innerText || '').trim()) && visible(b)); if (more) more.click();
-          await sleep(700);
-          const n = cardEls().length; stable = n === last ? stable + 1 : 0; last = n;
-        }
-        for (const c of cardEls()) {
-          const r = parseWalletCard(c.innerText, order); if (!r || seen.has(r.sig)) continue;
-          r.tab = tab ? tab.label.replace(/\s?\(\d+\)$/, '') : null; r.i = W.__shWallet.push(([...c.querySelectorAll('a')].find((a) => /T&C|Điều kiện/i.test(a.innerText)) || {}).href || null) - 1;
-          seen.set(r.sig, r); W.__shWalletRows.push({ i: r.i, tab: r.tab, text: c.innerText, order });
-        }
-        const total = +((tab?.label || '').match(/\((\d+)\)$/) || [])[1];
-        log(`${tab ? tab.label : 'page'}: ${last} cards → ${seen.size} unique${total && last < total * 0.8 ? ` (PARTIAL: ${last}/${total} loaded)` : ''}`);
-        window.scrollTo(0, 0); await sleep(600);
-      }
-      return { tabs: tabs.map((t) => t.label), unique: seen.size, ranking: rankObj({ order, proven }) };
+      return { tabs: tabs.map((t) => t.label), pages: (W.__shWPages || []).length,
+        next: 'SCROLL WITH THE MOUSE: computer scroll down 10 ticks (x2-3) over the voucher list, wait ~4 s, SH.walletPages(); repeat until done:true, then SH.walletRead({order:[<total>]}). JS scrolling does not load pages.' };
     });
+  }
+  /** Build the ranking from every wallet page captured so far (API JSON; DOM cards only when no page was captured). No hop. */
+  function walletRead({ order = [], proven = null } = {}) {
+    const P = W.__shWPages || [], last = P[P.length - 1], seen = new Map(); W.__shWallet = []; W.__shWalletRows = [];
+    const apiV = new Map(); for (const p of P) for (const v of p.vs) apiV.set(v.promotionid, v);
+    for (const v of apiV.values()) {
+      const r = parseWalletApi(v, order); if (!r || seen.has(r.sig)) continue;
+      r.i = W.__shWallet.push(r.url) - 1; seen.set(r.sig, r); W.__shWalletRows.push({ i: r.i, tab: r.tab, api: { ...r, save: undefined }, order });
+    }
+    if (!apiV.size) { // DOM fallback (v3 path): only what is rendered on screen
+      const cardEls = [...document.querySelectorAll('div')].filter((d) => { const t = d.innerText || ''; return t.length < 420 && isWalletCardText(t) && ![...d.children].some((c) => isWalletCardText(c.innerText || '')); });
+      for (const c of cardEls) {
+        const r = parseWalletCard(c.innerText, order); if (!r || seen.has(r.sig)) continue;
+        r.i = W.__shWallet.push(([...c.querySelectorAll('a')].find((a) => /T&C|Điều kiện/i.test(a.innerText)) || {}).href || null) - 1;
+        seen.set(r.sig, r); W.__shWalletRows.push({ i: r.i, tab: null, text: c.innerText, order });
+      }
+    }
+    const done = !!last && last.n < 50;
+    db.wallet = { urls: W.__shWallet, rows: W.__shWalletRows.map((r) => ({ ...r, text: r.text ? String(r.text).slice(0, 420) : undefined })), complete: done, pages: P.length }; db.walletTs = Date.now(); save();
+    return out({ status: apiV.size ? (done ? `COMPLETE: ${P.length} API pages, ${apiV.size} vouchers` : `PARTIAL: ${P.length} API pages (last full) - keep wheel-scrolling; report must say "voucher tốt nhất chưa xác định"`) : 'DOM only (no API page captured) - PARTIAL', unique: seen.size, ranking: rankObj({ order, proven }) });
   }
 
   /** T&C of wallet vouchers by index (from SH.wallet) or URL — batched in one background job, cached until the voucher itself expires (SH.vouchers / SH.tcExport). */
   function tc(refs, { name = 'tc' } = {}) {
     return job(name, async (log, J) => {
-      const res = [];
+      const res = []; walletFromDb();
       for (const ref of refs) {
         if (J.stop) break;
         const url = typeof ref === 'number' ? (W.__shWallet || [])[ref] : ref;
@@ -788,7 +909,7 @@
   async function checkoutVouchers() {
     const title = /Discount & Cashback|Free Shipping|Giảm giá|Miễn phí vận chuyển/;
     for (const s of scrollables().filter((s) => title.test(s.innerText || ''))) for (let i = 0; i < 30; i++) { s.scrollTop += 2000; await sleep(150); }
-    const isCard = (t) => /T&C|Điều kiện/.test(t) && /(off|Cashback|Giảm|Hoàn)/.test(t);
+    const isCard = (t) => /T&C|Điều kiện/i.test(t) && /(off|Cashback|Giảm|Hoàn)/.test(t);
     const cards = [...document.querySelectorAll('div')].filter((d) => { const t = d.innerText || ''; return isCard(t) && t.length < 380 && ![...d.children].some((c) => isCard(c.innerText || '')); });
     const wraps = new Set(), rows = [];
     for (const c of cards) {
@@ -819,10 +940,10 @@
     return out({ u: c.u.slice(0, 120), keys: walk(c.j, depth) }, 3000);
   }
   function status() {
-    const now = Date.now();
+    sync(); const now = Date.now();
     return out({ v: VER, url: location.pathname, hops: `${db.hops.filter((t) => now - t < 3.6e6).length}/h ${db.hops.length}/day (limits ${cfg.perHour}/${cfg.perDay})`, blockedUntil: db.blockedUntil > now ? new Date(db.blockedUntil).toLocaleTimeString() : null, jobs: Object.fromEntries(Object.entries(jobs).map(([k, j]) => [k, j.status])), stored: { items: Object.keys(db.items).length, pdp: Object.keys(db.pdp).length, prices: Object.keys(db.prices).length, tc: Object.keys(db.tc).length }, urlParams: cfg.urlParams || null });
   }
-  function config(o) { Object.assign(cfg, o); Object.assign(db.cfg, o); save(); return status(); }
+  function config(o) { sync(); Object.assign(cfg, o); Object.assign(db.cfg, o); db.cfgTs = Date.now(); save(); return status(); }
   function use(p) { profile = typeof p === 'string' ? PROFILES[p] : { ...PROFILES.ram_ddr4_2x16, ...p }; return 'profile set'; }
   /** Record a real checkout (app screenshot / web) for a listing: SH.checkout('shopid/itemid', {items, productDisc, shopV, voucher, ship, shipDisc, total, at, source}). */
   function checkout(k, o) {
@@ -858,14 +979,16 @@
     for (const [k, o] of Object.entries(db.items)) if (re.test(o.name || '')) { hit.add(k); delete db.items[k]; }
     for (const [k, v] of Object.entries(db.pdp)) if (hit.has(k) || re.test(v.title || '')) { hit.add(k); delete db.pdp[k]; }
     let np = 0;
-    for (const key of Object.keys(db.prices)) if (hit.has(key.split('#')[0])) { delete db.prices[key]; np++; }
+    for (const key of Object.keys(db.prices)) if (hit.has(key.split('#')[0])) { delete db.prices[key]; (db.tomb = db.tomb || {})['prices:' + key] = Date.now(); np++; }
     let nq = 0;
     const qre = queries instanceof RegExp ? queries : re;
     for (const path of Object.keys(db.searched)) {
       let dec = path; try { dec = decodeURIComponent(path); } catch (e) { /* keep raw */ }
-      if (qre.test(dec)) { delete db.searched[path]; nq++; }
+      if (qre.test(dec)) { delete db.searched[path]; (db.tomb = db.tomb || {})['searched:' + path] = Date.now(); nq++; }
     }
     for (const k of hit) { delete db.checkouts[k]; delete db.pickers[k]; }
+    const now = Date.now(); db.tomb = db.tomb || {};
+    for (const k of hit) for (const m of ['items', 'pdp', 'checkouts', 'pickers']) db.tomb[m + ':' + k] = now; // other lanes must not re-add them
     save();
     return `forgot ${hit.size} listings, ${np} price rows, ${nq} cached queries - next sweep re-reads them. ${Object.keys(db.items).length} items / ${Object.keys(db.pdp).length} PDPs still cached.`;
   }
@@ -873,6 +996,6 @@
   const history_ = (k) => out(Object.entries(db.prices).filter(([key]) => key.startsWith(k + '#')).map(([key, e]) => [key, e.h]));
   const exportDb = () => out({ prices: db.prices, pdp: Object.values(db.pdp).map((s) => [s.k, s.verdict, s.title, s.kit, s.shop.name]) }, 60000);
 
-  Object.assign(SH, { go, job, wait, stop: (n) => { if (jobs[n]) jobs[n].stop = true; return 'stopping ' + n; }, queries, sweep, pdp, report, forget, checkout, picker, cart, wallet, rank, tc, tcHere, tcExport, tcImport, vouchers, checkoutVouchers, keys, status, config, use, detail, history: history_, export: exportDb, cfg, db: () => db });
+  Object.assign(SH, { go, job, wait, stop: (n) => { if (jobs[n]) jobs[n].stop = true; return 'stopping ' + n; }, queries, sweep, pdp, report, forget, checkout, picker, cart, wallet, walletPages, walletRead, rank, tc, tcHere, tcExport, tcImport, vouchers, checkoutVouchers, keys, status, config, use, detail, history: history_, export: exportDb, cfg, db: () => db });
   return 'SH ' + VER + ' ready ' + status();
 });

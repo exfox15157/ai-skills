@@ -25,15 +25,15 @@ Part of the shopee-vn skill — see ../SKILL.md.
 - Large official retailers can have > 500 items: `huge-catalog` is skipped for `is_official_shop`, and alone it is only a warning.
 - **Dead shop with a copied description** (2026-09-15): G.Skill Neo 5.45M, 0 sold, shop 1 rating, `last_active_time: 0`,
   title part `…32GTZN` but description part `…32GTZR`. → `desc-part≠title-part`, `few-shop-ratings`, `shop-inactive` (warn).
-- **"8/16/32GB" variant listings** carry no options in search → `kit?` (soft, sent to PDP) instead of a hard reject.
+- **"8/16/32GB" variant listings** carry no options in search → `kit?` (soft, sent to PDP).
   Price spread is compared **per GB**, and a part number found only in such a listing's description only warns.
 - **"Newbox"** in title/description = repackaged, not sealed → `warn-word`. Condition "Used" in the spec table → `USED(spec)`.
 - Titles with "(1x16)" or "các loại / đã qua sử dụng" are dropped at search stage.
 - **Bundle listings ("Bộ sản phẩm … A + B") are a per-unit blind spot** (2026-09-16, a brand's Official Store): the sweep
   captured ~15 of them but `SH.report` left them in the unchecked tail, so they reached no table. Read PDPs for every
-  `Bộ sản phẩm|combo|refill` title **before** writing the "Better price per unit" list. Live numbers: Foaming 473+30 =
+  `Bộ sản phẩm|combo|refill` title **before** writing the per-unit rows of "Gợi ý khác". Live numbers: Foaming 473+30 =
   490k/503ml = 97.4k per 100ml vs plain 473ml bottle 484k/473ml = 102.3k — the bundle gives **+30ml for +6k**, so the plain
   bottle is never the right sub-line; the 473ml refill pouch (425k/473ml = 89.9k) still wins per unit. Two identical
-  473+30 bundles exist at the same 490k (`51711094887` 656 sold, `40925900270` 4 006 sold) — quote the one with sales.
-  A bundle PDP can come back with **no `product_shipping` block at all** (`45811121213` → `ship ?`); don't infer the fee
+  473+30 bundles exist at the same 490k (`10000000001` 656 sold, `10000000002` 4 006 sold) — quote the one with sales.
+  A bundle PDP can come back with **no `product_shipping` block at all** (`10000000003` → `ship ?`); don't infer the fee
   from a sibling listing, say it is unread.

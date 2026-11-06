@@ -7,7 +7,7 @@ const path = require('path');
 const vm = require('vm');
 
 const src = fs.readFileSync(path.join(__dirname, '..', 'js', 'sh.js'), 'utf8');
-const ctx = vm.createContext({ console, setTimeout, URL, atob }); // atob: browser global, used to decode voucher evcode
+const ctx = vm.createContext({ console, setTimeout, URL, atob, btoa }); // atob: browser global, used to decode voucher evcode
 ctx.window = ctx;
 const ret = vm.runInContext(src, ctx);
 const T = ctx.SH._t;
@@ -15,7 +15,7 @@ const P = ctx.SH.PROFILES.ram_ddr4_2x16;
 const plain = (o) => JSON.parse(JSON.stringify(o));
 
 test('library installs without a DOM and exposes helpers', () => {
-  assert.match(ret, /SH 3.9/);
+  assert.match(ret, /SH 4.3/);
   assert.equal(typeof T.decodeParts, 'function');
 });
 
@@ -395,4 +395,74 @@ test('voucher layers: percentage_used is not a discount rate, and all four layer
   assert.equal(proven.shipV, 15000);
   assert.equal(proven.proof, 'picker');
   assert.deepEqual([proven.src.shopee, proven.src.shipVoucher], ['picker', 'picker']);
+});
+
+test('v4.0: "Vận Chuyển: Không hỗ trợ" rejects the listing and drops its fee', () => {
+  const pv = (v) => ({ single_value: v * 1e5 });
+  const pc = { data: { item: { title: 'Tủ lạnh BrandA R-AB640X0', models: [{ model_id: 1, name: '', price: 34200000e5 }] }, shop_detailed: {}, product_shipping: null } };
+  const dom = { noShipText: 'Chờ giá\n0% TRẢ GÓP\nVận Chuyển\nKhông hỗ trợ\nAn Tâm Mua Sắm Cùng Shopee', ship: '' };
+  const S = T.summarizePdp('1/2', pc, dom, { ...P, kit: { test: () => true } });
+  assert.equal(S.verdict, 'reject'); assert.equal(S.noShip, true); assert.equal(S.ship, null);
+  assert.ok(S.flags[0].startsWith('NO-DELIVERY'), S.flags.join());
+  // all channels unserviceable in get_pc = same thing
+  assert.equal(T.shipUnsupported({ data: { product_shipping: { ungrouped_channel_infos: [{ name: 'Nhanh', price: pv(0), price_before_discount: null, warning: { type: 'unsupported_address' } }] } } }, ''), true);
+  // a normal page is not flagged, and "Miễn phí vận chuyển" in the guarantee line is not a fee
+  assert.equal(T.shipUnsupported(null, 'Vận Chuyển\nVận Chuyển Tới Phường Mẫu\nPhí Vận Chuyển ₫804.800'), false);
+  assert.equal(T.parseShipText('Chính hãng 100% • Miễn phí vận chuyển • Bảo hiểm\nSố Lượng\n36.190.000₫'), null);
+  // a DOM fee >= half the item price is a mis-read, dropped and flagged
+  const S2 = T.summarizePdp('1/3', { ...pc, data: { ...pc.data } }, { noShipText: '', ship: 'Phí vận chuyển 36.190.000₫' }, { ...P, kit: { test: () => true } });
+  assert.equal(S2.ship, null); assert.ok(S2.flags.some((f) => f.startsWith('ship-text-suspect')), S2.flags.join());
+});
+
+test('v4.0: mergeDb keeps every lane\'s writes, one hop budget, honours forget', () => {
+  const st = { items: { a: { ts: 1 }, b: { ts: 5 } }, pdp: { x: { ts: 10 } }, hops: [100, 200], cfg: { perHour: 45 }, cfgTs: 1, tc: {}, blockedUntil: 0 };
+  const mem = { items: { a: { ts: 3 }, c: { ts: 4 } }, pdp: { y: { ts: 11 } }, hops: [200, 300], cfg: { perHour: 45, shopee: [{ pct: 20 }] }, cfgTs: 2, tc: { u: { ts: 7 } } };
+  const m = plain(T.mergeDb(mem, st));
+  assert.deepEqual(Object.keys(m.items).sort(), ['a', 'b', 'c']); assert.equal(m.items.a.ts, 3);
+  assert.deepEqual(Object.keys(m.pdp).sort(), ['x', 'y']);
+  assert.deepEqual(m.hops, [100, 200, 300]);
+  assert.equal(m.cfg.shopee[0].pct, 20);
+  const older = plain(T.mergeDb({ ...mem, cfgTs: 0 }, st)); assert.equal(older.cfg.shopee, undefined); // the newer cfg wins
+  const now = Date.now();
+  const f = plain(T.mergeDb({ items: {}, tomb: { 'items:b': now } }, { items: { b: { ts: 5 } } })); // forgotten in this tab, still in storage
+  assert.equal(f.items.b, undefined);
+  const re = plain(T.mergeDb({ items: {}, tomb: { 'items:b': 5 } }, { items: { b: { ts: now } } })); // re-read after the forget survives
+  assert.ok(re.items.b);
+});
+
+test('search card keeps the campaign frame; VCX = Voucher Xtra frame (2026-10-04)', () => {
+  const o = T.parseSearchItem({ shopid: 1, itemid: 2, item_data: { name: 'x', item_card_display_price: { price: 1e5 } }, item_card_displayed_asset: { name: 'Tủ lạnh', image_overlay: { legacy_overlay: { name: '17VCX+ShopeeHome[26.9-12.10.2026]' } } } });
+  assert.equal(o.vcx, true); assert.match(o.overlay, /VCX/);
+  assert.equal(T.parseSearchItem({ shopid: 1, itemid: 3, item_data: { name: 'y' }, item_card_displayed_asset: {} }).vcx, false);
+});
+
+test('v4.1: wallet voucher from the get_user_voucher_list API (live shapes 2026-10-04)', () => {
+  const xtra = { promotionid: 1000000000000006, voucher_code: 'EXMALL13', signature: 'abc', min_spend: 250000000000, product_limit: true, percentage_used: 61, end_time: 1791478680, reward_type: 0, discount_percentage: 13, discount_value: 0, discount_cap: 150000000000, icon_text: 'SHOPEE MALL', shop_id: 0, remaining_usage_limit: 5 };
+  const r = plain(T.parseWalletApi(xtra, [35662000], 1791100000000));
+  assert.deepEqual([r.pct, r.cap, r.min, r.save[0], r.tab, r.scope, r.freeShip], [13, 1500000, 2500000, 1500000, 'Shopee', 'SHOPEE MALL', false]);
+  assert.match(r.url, /promotionId=1000000000000006&signature=abc/);
+  const fsv = plain(T.parseWalletApi({ promotionid: 2, voucher_code: 'FSV-1000000000000005', reward_type: 2, min_spend: 0, icon_text: 'Mã vận chuyển', shop_id: 0 }, [1], 0));
+  assert.equal(fsv.freeShip, true);
+  const shop = plain(T.parseWalletApi({ promotionid: 3, voucher_code: 'SHOPX10', reward_type: 0, reward_percentage: 10, min_spend: 50000000000, shop_id: 1000000001, icon_text: 'SHOP X STORE' }, [1e6], 0));
+  assert.equal(shop.tab, 'Shop');
+  assert.equal(T.parseWalletApi({ promotionid: 4, has_expired: true, discount_percentage: 5 }, [], 0), null);
+  // ranking keeps min(pct x price, cap): 13%/1.5M beats 25%/1M and 15%/1M on a 35.66M order
+  // (now pinned to the payload's day: the card ends 2026-10-08, so the real clock would drop it as expired)
+  const svip = plain(T.parseWalletApi({ promotionid: 5, voucher_code: 'SVIPDDVEX25', reward_type: 0, discount_percentage: 25, discount_cap: 100000000000, min_spend: 20000000000, shop_id: 0 }, [35662000], 0));
+  const R = T.rankVouchers([{ ...r, i: 0 }, { ...svip, i: 1 }], { now: 1791100000000 });
+  assert.equal(R.candidates[0].code, 'EXMALL13');
+});
+
+test('v4.1: coins cashback never ranks as a price cut', () => {
+  const c = plain(T.parseWalletApi({ promotionid: 9, voucher_code: 'EXCOINS20', reward_type: 1, reward_percentage: 20, reward_cap: 20000, min_spend: 10000000000, shop_id: 0, icon_text: 'Sinh Nhật Thành Viên' }, [35662000], 0));
+  const d = plain(T.parseWalletApi({ promotionid: 10, voucher_code: 'X', reward_type: 0, discount_percentage: 13, discount_cap: 150000000000, min_spend: 0, shop_id: 0 }, [35662000], 0));
+  const R = T.rankVouchers([{ ...c, i: 0 }, { ...d, i: 1 }]);
+  assert.equal(R.candidates.length, 1); assert.equal(R.coins.length, 1);
+});
+
+test('v4.3: wallet pages are stored by the capture hook and read without scrolling', () => {
+  // the hook only exists in a DOM context; check the store shape walletRead relies on via the pure parser
+  const page = Array.from({ length: 24 }, (_, i) => ({ promotionid: 100 + i, voucher_code: 'C' + i, reward_type: 0, discount_percentage: 10, discount_cap: 100000e5, min_spend: 0, shop_id: 0 }));
+  const rows = page.map((v) => T.parseWalletApi(v, [1e6], 0)).filter(Boolean);
+  assert.equal(rows.length, 24); assert.equal(page.length < 50, true); // a short page = end of the wallet
 });

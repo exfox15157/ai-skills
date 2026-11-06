@@ -61,6 +61,7 @@ The skill folder follows the [Agent Skills](https://agentskills.io/specification
 - Claude Code (CLI or desktop app) with skills enabled.
 - **[Claude in Chrome](https://chromewebstore.google.com/)** extension in Chrome or Edge, signed in with the same Claude account. The built-in browser pane also works, but Shopee often shows it a captcha on the first load. See `SKILL.md` §1.
 - A Shopee VN account, **logged in by you** in that browser.
+- The **Workflow** tool for the default 3-agent runner (`workflows/shopee-3agent.js`, `SKILL.md` §1c). Without it the skill stops and asks before running the steps by hand.
 - Node.js 18+ (only for the report linter and the tests).
 
 ## How it works
@@ -69,8 +70,10 @@ Everything runs as JavaScript **inside the shopee.vn page** you are logged into 
 
 ```
 plugins/shopee-vn/skills/shopee-vn/
-├─ SKILL.md              workflow the agent follows (core, ~300 lines)
-├─ references/           loaded on demand: API notes, listing traps, vouchers, constraints, field notes
+├─ SKILL.md              workflow the agent follows (core, ~600 lines)
+├─ references/           loaded on demand: API notes, listing traps, vouchers, constraints
+├─ workflows/            shopee-3agent.js: the default runner (orchestrator + scanners + reporter)
+├─ rules/                one short rules file per workflow agent, holding its page JS
 ├─ report-template.md    report format
 ├─ js/sh.js              in-page library (SH.sweep / SH.pdp / SH.wallet / SH.report …)
 ├─ tools/lint-report.js  report linter
