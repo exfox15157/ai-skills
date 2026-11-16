@@ -21,6 +21,23 @@
         "ecommerce",
         "browser-automation"
       ]
+    },
+    {
+      "name": "hotel-search",
+      "source": "./plugins/hotel-search",
+      "description": "Compare hotels on Booking.com (mobile), Agoda and iVIVU from your own logged-in browser: take each room to the checkout summary, subtract coupons and your credit-card cashback, and rank hotels by the price you actually pay.",
+      "version": "1.0.0",
+      "category": "travel",
+      "keywords": [
+        "hotel",
+        "booking",
+        "agoda",
+        "ivivu",
+        "vietnam",
+        "price-comparison",
+        "cashback",
+        "browser-automation"
+      ]
     }
   ]
 }
