@@ -12,3 +12,6 @@ desktop.ini
 
 # never commit a sanitizer/export script: it names private data by design
 export.js
+
+# hotel-search profile files (your priorities and cards)
+plugins/hotel-search/skills/hotel-search/data/
