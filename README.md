@@ -9,6 +9,7 @@ A collection of **Agent Skills**: `SKILL.md` folders that teach an AI agent a sp
 | Skill | What it does | Tested with |
 |---|---|---|
 | [**shopee-vn**](plugins/shopee-vn/) | Shop on **Shopee Vietnam** from your own logged-in browser: sweep listings, re-price the exact variant, flag bait/used/mislabelled listings, and find which of your vouchers really apply to get the **true checkout price**. | Claude Code + Claude in Chrome |
+| [**hotel-search**](plugins/hotel-search/) | Compare hotels on **Booking.com, Agoda and iVIVU** from your own logged-in browser: take each room to checkout, subtract coupons and your **credit-card cashback**, and rank by the **price you actually pay**. | Claude + Claude in Chrome |
 
 ## Install
 
@@ -17,6 +18,7 @@ A collection of **Agent Skills**: `SKILL.md` folders that teach an AI agent a sp
 ```
 /plugin marketplace add exfox15157/ai-skills
 /plugin install shopee-vn@ai-skills
+/plugin install hotel-search@ai-skills
 ```
 
 **Any other agent that supports Agent Skills:** copy the skill folder, e.g. `plugins/shopee-vn/skills/shopee-vn/`, into that agent's skills directory.
